@@ -1,0 +1,382 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: webhook-train-model-priority
+  namespace: argo
+spec:
+  dependencies:
+    - name: train-model-dependency
+      eventSourceName: webhook-train-model-priority
+      eventName: webhook-train-model-priority
+  triggers:
+    - template:
+        name: webhook-workflow-trigger
+        k8s:
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.8.11, pipelines.kubeflow.org/pipeline_compilation_time: '2022-05-10T00:01:34.309876',
+                  pipelines.kubeflow.org/pipeline_spec: '{"description": "train and sample report
+                    generator", "inputs": [{"name": "project_id"}, {"name": "train_id"}, {"name": "raw_data_filepath"},
+                    {"name": "train_json_filepath"}, {"name": "get_sample_report"}], "name": "betterdata
+                    synthetic pipeline"}'}
+                labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.8.11}
+                name: my-workflow-
+                namespace: argo
+              spec:
+                entrypoint: betterdata-synthetic-pipeline
+                podPriorityClassName: high-priority-nonpreempting
+                priority: 100
+                onExit: exit-handler
+                imagePullSecrets:
+                - name: dockercreds
+                templates:
+                - name: betterdata-synthetic-pipeline
+                  inputs:
+                    parameters:
+                    - {name: get_sample_report}
+                    - {name: train_json_filepath}
+                    - {name: raw_data_filepath}
+                    - {name: train_id}
+                    - {name: project_id}
+                    - {name: ml_server_ip}
+                  dag:
+                    tasks:
+                    - name: condition-1
+                      template: condition-1
+                      when: '"{{inputs.parameters.get_sample_report}}" == "true"'
+                      dependencies: [artifacts-uploader]
+                      arguments:
+                        parameters:
+                        - {name: train_json_filepath, value: '{{inputs.parameters.train_json_filepath}}'}
+                        - {name: raw_data_filepath, value: '{{inputs.parameters.raw_data_filepath}}'}
+                        - {name: train_id, value: '{{inputs.parameters.train_id}}'}
+                        - {name: project_id, value: '{{inputs.parameters.project_id}}'}
+
+                    - name: assets-downloader
+                      template: assets-downloader
+                      arguments:
+                        parameters:
+                        - {name: train_json_filepath, value: '{{inputs.parameters.train_json_filepath}}'}
+                        - {name: raw_data_filepath, value: '{{inputs.parameters.raw_data_filepath}}'}
+                        - {name: train_id, value: '{{inputs.parameters.train_id}}'}
+                        - {name: project_id, value: '{{inputs.parameters.project_id}}'}
+
+                    - name: train-model
+                      template: train-model
+                      dependencies: [assets-downloader]
+                      arguments:
+                        artifacts:
+                        - name: rawdata
+                          from: '{{tasks.assets-downloader.outputs.artifacts.rawdata}}'
+                        - name: mlconfig
+                          from: '{{tasks.assets-downloader.outputs.artifacts.mlconfig}}'
+                        - name: data-args-2b
+                          from: '{{tasks.assets-downloader.outputs.artifacts.data-args-2b}}'
+                        
+
+                    - name: artifacts-uploader
+                      template: artifacts-uploader
+                      dependencies: [train-model]
+                      arguments:
+                        parameters:
+                        - {name: train_id, value: '{{inputs.parameters.train_id}}'}
+                        - {name: project_id, value: '{{inputs.parameters.project_id}}'}
+                        artifacts:
+                        - name: model
+                          from: '{{tasks.train-model.outputs.artifacts.model}}'
+                        - name: traininfo
+                          from: '{{tasks.train-model.outputs.artifacts.traininfo}}'
+                        - name: transformer
+                          from: '{{tasks.train-model.outputs.artifacts.transformer}}'
+
+
+                - name: condition-1
+                  inputs:
+                    parameters:
+                    - {name: train_json_filepath}
+                    - {name: raw_data_filepath}
+                    - {name: train_id}
+                    - {name: project_id}
+                    
+                  dag:
+                    tasks:
+                    - name: call-custom-deploy
+                      template: call-custom-deploy
+                      arguments:
+                        parameters:
+                        - {name: train_json_filepath, value: '{{inputs.parameters.train_json_filepath}}'}
+                        - {name: train_id, value: '{{inputs.parameters.train_id}}'}
+                        - {name: project_id, value: '{{inputs.parameters.project_id}}'}
+                        
+                - name: call-custom-deploy
+                  container:
+                    command: [python, main.py, --mode, 'deploy_custom',--project_id, '{{inputs.parameters.project_id}}',
+                      --train_id, '{{inputs.parameters.train_id}}',
+                      --json_filepath, '{{inputs.parameters.train_json_filepath}}']
+                    image: localhost:5000/sidecar_v1:latest
+                    imagePullPolicy: IfNotPresent
+                    env:
+                      - name: backendcreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: backendcreds
+                            key: creds
+                      - name: miniocreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: miniocreds
+                            key: creds
+                  inputs:
+                    parameters:
+                    - {name: train_json_filepath}
+                    - {name: train_id}
+                    - {name: project_id}
+                    
+                
+                  metadata:
+                    labels:
+                      pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                      pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                      pipelines.kubeflow.org/enable_caching: "true"
+                
+                
+                - name: assets-downloader
+                  container:
+                    command: [python, main.py, --mode, 'download', --op, 'train', --project_id, '{{inputs.parameters.project_id}}',
+                      --train_id, '{{inputs.parameters.train_id}}', --json_filepath, '{{inputs.parameters.train_json_filepath}}', --raw_data_filepath, '{{inputs.parameters.raw_data_filepath}}']
+                    image: localhost:5000/sidecar_v1:latest
+                    imagePullPolicy: IfNotPresent
+                    env:
+                      - name: miniocreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: miniocreds
+                            key: creds
+                  outputs:
+                    artifacts:
+                    - name: rawdata
+                      path: /tmp/train.csv
+                      archive:
+                        none: {}
+                    - name: mlconfig
+                      path: /tmp/ml_config.json
+                      archive:
+                        none: {}
+                    - name: data-args-2b
+                      path: /tmp/data_args_2b.json
+                      archive:
+                        none: {}
+                 
+                  inputs:
+                    parameters:
+                    - {name: raw_data_filepath}
+                    - {name: train_json_filepath}
+                    - {name: train_id}
+                    - {name: project_id}
+                  metadata:
+                    labels:
+                      pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                      pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                      pipelines.kubeflow.org/enable_caching: "true"
+                
+                - name: train-model
+                  container:
+                    command: [python, main_ml_api.py, --mode, 'train', --raw_data_filepath, /tmp/train.csv,
+                      --json_filepath, /tmp/ml_config.json, --data_json_filepath, /tmp/data_args_2b.json]
+                    image: localhost:5000/ml_engine_v2:latest
+                    imagePullPolicy: IfNotPresent 
+                  inputs:
+                    artifacts:
+                    - name: rawdata
+                      path: /tmp/train.csv
+                    - name: mlconfig
+                      path: /tmp/ml_config.json
+                    - name: data-args-2b
+                      path: /tmp/data_args_2b.json
+                   
+                  outputs:
+                    artifacts:
+                    - name: model
+                      path: /tmp/generator.h5
+                      archive:
+                        none: {}
+                    - name: traininfo
+                      path: /tmp/train_info.json
+                      archive:
+                        none: {}
+                    - name: transformer
+                      path: /tmp/transformer.pt
+                      archive:
+                        none: {}
+
+                - name: artifacts-uploader
+                  container:
+                    command: [python, main.py, --mode, 'upload', --op, 'train', --project_id, '{{inputs.parameters.project_id}}',
+                      --train_id, '{{inputs.parameters.train_id}}']
+                    image: localhost:5000/sidecar_v1:latest
+                    imagePullPolicy: IfNotPresent
+                    env:
+                      - name: miniocreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: miniocreds
+                            key: creds
+                  inputs:
+                    parameters:
+                    - {name: train_id}
+                    - {name: project_id}
+                    artifacts:
+                    - name: model
+                      path: /tmp/generator.h5
+                    - name: traininfo
+                      path: /tmp/train_info.json
+                    - name: transformer
+                      path: /tmp/transformer.pt
+                  metadata:
+                    labels:
+                      pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                      pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                      pipelines.kubeflow.org/enable_caching: "true"    
+
+
+
+                - name: exit-handler
+                  inputs:
+                    parameters:
+                    - {name: train_id}
+                    - {name: project_id}
+                    - {name: ml_server_ip}
+                  steps:
+                  - - name: notify-success
+                      template: updatemysql-success
+                      when: "{{workflow.status}} == Succeeded"
+                      arguments:
+                        parameters: 
+                        - {name: train_id, value: '{{inputs.parameters.train_id}}'}
+                        - {name: project_id, value: '{{inputs.parameters.project_id}}'}
+                        - {name: ml_server_ip, value: '{{inputs.parameters.ml_server_ip}}'}
+                    - name: notify-fail
+                      template: updatemysql-failure
+                      when: "{{workflow.status}} != Succeeded"
+                      arguments:
+                        parameters: 
+                        - {name: train_id, value: '{{inputs.parameters.train_id}}'}
+                        - {name: project_id, value: '{{inputs.parameters.project_id}}'}
+                        - {name: ml_server_ip, value: '{{inputs.parameters.ml_server_ip}}'}
+
+
+                - name: updatemysql-success
+                  container:
+                    image: localhost:5000/exithandler_v1:latest
+                    imagePullPolicy: IfNotPresent
+                    command: [python, exithandler.py, --mode, 'train', --project_id, '{{inputs.parameters.project_id}}', --train_id, '{{inputs.parameters.train_id}}', --status, 'success', --ml_server_ip, '{{inputs.parameters.ml_server_ip}}']
+                    env:
+                      - name: mysqlcreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: mysqlcreds
+                            key: creds
+                      - name: miniocreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: miniocreds
+                            key: creds
+                      - name: backendcreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: backendcreds
+                            key: creds
+       
+                  inputs:
+                    parameters:
+                    - {name: train_id}
+                    - {name: project_id}
+                    - {name: ml_server_ip}
+                      
+
+                - name: updatemysql-failure
+                  container:
+                    image: localhost:5000/exithandler_v1:latest
+                    imagePullPolicy: IfNotPresent
+                    command: [python, exithandler.py, --mode, 'train', --project_id, '{{inputs.parameters.project_id}}', --train_id, '{{inputs.parameters.train_id}}', --status, 'failed', --ml_server_ip, '{{inputs.parameters.ml_server_ip}}']
+                    env:
+                      - name: mysqlcreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: mysqlcreds
+                            key: creds
+                      - name: miniocreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: miniocreds
+                            key: creds
+                      - name: backendcreds
+                        valueFrom:
+                          secretKeyRef:
+                            name: backendcreds
+                            key: creds
+
+                  inputs:
+                    parameters:
+                    - {name: train_id}
+                    - {name: project_id}
+                    - {name: ml_server_ip}
+                       
+
+                      
+                metadata:
+                  labels:
+                    pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                    pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                    pipelines.kubeflow.org/enable_caching: "true"
+                arguments:
+                  parameters:
+                  - {name: raw_data_filepath}
+                  - {name: project_id}
+                  - {name: train_json_filepath}
+                  - {name: train_id}
+                  - {name: get_sample_report}
+                  - {name: workflow_name}
+                  - {name: ml_server_ip}
+                
+              
+
+          operation: create
+          parameters:
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.raw_data_filepath
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.project_id
+              dest: spec.arguments.parameters.1.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.train_json_filepath
+              dest: spec.arguments.parameters.2.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.train_id
+              dest: spec.arguments.parameters.3.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.get_sample_report
+              dest: spec.arguments.parameters.4.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.workflow_name
+              dest: metadata.name
+              operation: append
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.workflow_name
+              dest: spec.arguments.parameters.5.value
+            - src:
+                dependencyName: train-model-dependency
+                dataKey: body.ml_server_ip
+              dest: spec.arguments.parameters.6.value
+            
