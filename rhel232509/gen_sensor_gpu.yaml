@@ -1,0 +1,516 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: webhook-gen-model
+  namespace: argo
+spec:
+  dependencies:
+  - name: generate-model-dependency
+    eventSourceName: webhook-gen-model
+    eventName: webhook-gen-model
+  triggers:
+  - template:
+      name: webhook-workflow-trigger
+      k8s:
+        source:
+          resource:
+            apiVersion: argoproj.io/v1alpha1
+            kind: Workflow
+            metadata:
+              annotations:
+                pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                pipelines.kubeflow.org/pipeline_compilation_time: '2022-05-10T00:01:34.309876'
+                pipelines.kubeflow.org/pipeline_spec: '{"description": "train and
+                  sample report generator", "inputs": [{"name": "project_id"}, {"name":
+                  "train_id"}, {"name": "raw_data_filepath"}, {"name": "gen_id"},
+                  {"name": "get_sample_report"}], "name": "betterdata synthetic pipeline"}'
+              labels:
+                pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+              name: my-workflow-
+              namespace: argo
+            spec:
+              entrypoint: betterdata-synthetic-pipeline-generate
+              onExit: exit-handler
+              imagePullSecrets:
+              - name: dockercreds
+              templates:
+              - name: betterdata-synthetic-pipeline-generate
+                nodeSelector:
+                  nvidia.com/gpu: 'true'
+                tolerations:
+                - key: nvidia.com/gpu
+                  operator: Exists
+                  effect: NoSchedule
+                inputs:
+                  parameters:
+                  - name: get_sample_report
+                  - name: gen_id
+                  - name: raw_data_filepath
+                  - name: train_id
+                  - name: project_id
+                  - name: gen_json_filepath
+                  - name: ml_server_ip
+                dag:
+                  tasks:
+                  - name: condition-1
+                    template: condition-1
+                    when: '"{{inputs.parameters.get_sample_report}}" == "true"'
+                    dependencies:
+                    - artifacts-uploader
+                    arguments:
+                      parameters:
+                      - name: gen_id
+                        value: '{{inputs.parameters.gen_id}}'
+                      - name: raw_data_filepath
+                        value: '{{inputs.parameters.raw_data_filepath}}'
+                      - name: train_id
+                        value: '{{inputs.parameters.train_id}}'
+                      - name: project_id
+                        value: '{{inputs.parameters.project_id}}'
+                      - name: gen_json_filepath
+                        value: '{{inputs.parameters.gen_json_filepath}}'
+                      - name: ml_server_ip
+                        value: '{{inputs.parameters.ml_server_ip}}'
+                  - name: assets-downloader
+                    template: assets-downloader
+                    arguments:
+                      parameters:
+                      - name: gen_json_filepath
+                        value: '{{inputs.parameters.gen_json_filepath}}'
+                      - name: raw_data_filepath
+                        value: '{{inputs.parameters.raw_data_filepath}}'
+                      - name: train_id
+                        value: '{{inputs.parameters.train_id}}'
+                      - name: project_id
+                        value: '{{inputs.parameters.project_id}}'
+                      - name: gen_id
+                        value: '{{inputs.parameters.gen_id}}'
+                  - name: pre-trained-model
+                    template: pre-trained-model
+                    dependencies:
+                    - assets-downloader
+                    arguments:
+                      artifacts:
+                      - name: rawdata
+                        from: '{{tasks.assets-downloader.outputs.artifacts.rawdata}}'
+                      - name: mlconfig
+                        from: '{{tasks.assets-downloader.outputs.artifacts.mlconfig}}'
+                      - name: model
+                        from: '{{tasks.assets-downloader.outputs.artifacts.model}}'
+                      - name: transformer
+                        from: '{{tasks.assets-downloader.outputs.artifacts.transformer}}'
+                      - name: data-args-2b
+                        from: '{{tasks.assets-downloader.outputs.artifacts.data-args-2b}}'
+                  - name: artifacts-uploader
+                    template: artifacts-uploader
+                    dependencies:
+                    - pre-trained-model
+                    arguments:
+                      parameters:
+                      - name: train_id
+                        value: '{{inputs.parameters.train_id}}'
+                      - name: project_id
+                        value: '{{inputs.parameters.project_id}}'
+                      - name: gen_id
+                        value: '{{inputs.parameters.gen_id}}'
+                      - name: raw_data_filepath
+                        value: '{{inputs.parameters.raw_data_filepath}}'
+                      artifacts:
+                      - name: syntheticdata
+                        from: '{{tasks.pre-trained-model.outputs.artifacts.syntheticdata}}'
+                      - name: inferenceinfo
+                        from: '{{tasks.pre-trained-model.outputs.artifacts.inferenceinfo}}'
+              - name: condition-1
+                inputs:
+                  parameters:
+                  - name: gen_id
+                  - name: raw_data_filepath
+                  - name: train_id
+                  - name: gen_json_filepath
+                  - name: project_id
+                  - name: ml_server_ip
+                dag:
+                  tasks:
+                  - name: call-metrics-ml
+                    template: call-metrics-ml
+                    arguments:
+                      parameters:
+                      - name: gen_id
+                        value: '{{inputs.parameters.gen_id}}'
+                      - name: raw_data_filepath
+                        value: '{{inputs.parameters.raw_data_filepath}}'
+                      - name: gen_json_filepath
+                        value: '{{inputs.parameters.gen_json_filepath}}'
+                      - name: train_id
+                        value: '{{inputs.parameters.train_id}}'
+                      - name: project_id
+                        value: '{{inputs.parameters.project_id}}'
+                      - name: ml_server_ip
+                        value: '{{inputs.parameters.ml_server_ip}}'
+              - name: call-metrics-ml
+                container:
+                  command:
+                  - python
+                  - main.py
+                  - --mode
+                  - deploy_metrics
+                  - --project_id
+                  - '{{inputs.parameters.project_id}}'
+                  - --train_id
+                  - '{{inputs.parameters.train_id}}'
+                  - --raw_data_filepath
+                  - '{{inputs.parameters.raw_data_filepath}}'
+                  - --gen_id
+                  - '{{inputs.parameters.gen_id}}'
+                  - --json_filepath
+                  - '{{inputs.parameters.gen_json_filepath}}'
+                  - --ml_server_ip
+                  - '{{inputs.parameters.ml_server_ip}}'
+                  image: localhost:5000/sidecar_v1:232509
+                  imagePullPolicy: IfNotPresent
+                  env:
+                  - name: miniocreds
+                    valueFrom:
+                      secretKeyRef:
+                        name: miniocreds
+                        key: creds
+                inputs:
+                  parameters:
+                  - name: gen_id
+                  - name: raw_data_filepath
+                  - name: gen_json_filepath
+                  - name: train_id
+                  - name: project_id
+                  - name: ml_server_ip
+                metadata:
+                  labels:
+                    pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                    pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                    pipelines.kubeflow.org/enable_caching: 'true'
+              - name: assets-downloader
+                container:
+                  command:
+                  - python
+                  - main.py
+                  - --mode
+                  - download
+                  - --op
+                  - generate
+                  - --project_id
+                  - '{{inputs.parameters.project_id}}'
+                  - --gen_id
+                  - '{{inputs.parameters.gen_id}}'
+                  - --train_id
+                  - '{{inputs.parameters.train_id}}'
+                  - --json_filepath
+                  - '{{inputs.parameters.gen_json_filepath}}'
+                  - --raw_data_filepath
+                  - '{{inputs.parameters.raw_data_filepath}}'
+                  image: localhost:5000/sidecar_v1:232509
+                  imagePullPolicy: IfNotPresent
+                  env:
+                  - name: miniocreds
+                    valueFrom:
+                      secretKeyRef:
+                        name: miniocreds
+                        key: creds
+                outputs:
+                  artifacts:
+                  - name: rawdata
+                    path: /tmp/train.csv
+                    archive:
+                      none: {}
+                  - name: mlconfig
+                    path: /tmp/ml_config.json
+                    archive:
+                      none: {}
+                  - name: model
+                    path: /tmp/generator.h5
+                    archive:
+                      none: {}
+                  - name: transformer
+                    path: /tmp/transformer.pt
+                    archive:
+                      none: {}
+                  - name: data-args-2b
+                    path: /tmp/data_args_2b.json
+                    archive:
+                      none: {}
+                inputs:
+                  parameters:
+                  - name: raw_data_filepath
+                  - name: gen_json_filepath
+                  - name: train_id
+                  - name: project_id
+                  - name: gen_id
+                metadata:
+                  labels:
+                    pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                    pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                    pipelines.kubeflow.org/enable_caching: 'true'
+              - name: pre-trained-model
+                container:
+                  command:
+                  - python
+                  - main_ml_api.py
+                  - --mode
+                  - generate
+                  - --raw_data_filepath
+                  - /tmp/train.csv
+                  - --json_filepath
+                  - /tmp/ml_config.json
+                  - --model_path
+                  - /tmp/generator.h5
+                  - --transformer_filepath
+                  - /tmp/transformer.pt
+                  - --data_json_filepath
+                  - /tmp/data_args_2b.json
+                  image: localhost:5000/ml_engine_v2:232509
+                  imagePullPolicy: IfNotPresent
+                  resources:
+                    limits:
+                      nvidia.com/gpu: 1
+                inputs:
+                  artifacts:
+                  - name: rawdata
+                    path: /tmp/train.csv
+                  - name: mlconfig
+                    path: /tmp/ml_config.json
+                  - name: model
+                    path: /tmp/generator.h5
+                  - name: transformer
+                    path: /tmp/transformer.pt
+                  - name: data-args-2b
+                    path: /tmp/data_args_2b.json
+                outputs:
+                  artifacts:
+                  - name: syntheticdata
+                    path: /tmp/synthetic_data.csv
+                    archive:
+                      none: {}
+                  - name: inferenceinfo
+                    path: /tmp/inference_info.json
+                    archive:
+                      none: {}
+              - name: artifacts-uploader
+                container:
+                  command:
+                  - python
+                  - main.py
+                  - --mode
+                  - upload
+                  - --op
+                  - generate
+                  - --project_id
+                  - '{{inputs.parameters.project_id}}'
+                  - --train_id
+                  - '{{inputs.parameters.train_id}}'
+                  - --gen_id
+                  - '{{inputs.parameters.gen_id}}'
+                  - --raw_data_filepath
+                  - '{{inputs.parameters.raw_data_filepath}}'
+                  image: localhost:5000/sidecar_v1:232509
+                  imagePullPolicy: IfNotPresent
+                  env:
+                  - name: miniocreds
+                    valueFrom:
+                      secretKeyRef:
+                        name: miniocreds
+                        key: creds
+                inputs:
+                  parameters:
+                  - name: train_id
+                  - name: project_id
+                  - name: gen_id
+                  - name: raw_data_filepath
+                  artifacts:
+                  - name: syntheticdata
+                    path: /tmp/synthetic_data.csv
+                  - name: inferenceinfo
+                    path: /tmp/inference_info.json
+                metadata:
+                  labels:
+                    pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                    pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                    pipelines.kubeflow.org/enable_caching: 'true'
+              - name: exit-handler
+                inputs:
+                  parameters:
+                  - name: train_id
+                  - name: project_id
+                  - name: gen_id
+                  - name: raw_data_filepath
+                  - name: ml_server_ip
+                steps:
+                - - name: notify-success
+                    template: updatemysql-success
+                    when: '{{workflow.status}} == Succeeded'
+                    arguments:
+                      parameters:
+                      - name: train_id
+                        value: '{{inputs.parameters.train_id}}'
+                      - name: project_id
+                        value: '{{inputs.parameters.project_id}}'
+                      - name: gen_id
+                        value: '{{inputs.parameters.gen_id}}'
+                      - name: raw_data_filepath
+                        value: '{{inputs.parameters.raw_data_filepath}}'
+                      - name: ml_server_ip
+                        value: '{{inputs.parameters.ml_server_ip}}'
+                  - name: notify-fail
+                    template: updatemysql-failure
+                    when: '{{workflow.status}} != Succeeded'
+                    arguments:
+                      parameters:
+                      - name: train_id
+                        value: '{{inputs.parameters.train_id}}'
+                      - name: project_id
+                        value: '{{inputs.parameters.project_id}}'
+                      - name: gen_id
+                        value: '{{inputs.parameters.gen_id}}'
+                      - name: raw_data_filepath
+                        value: '{{inputs.parameters.raw_data_filepath}}'
+                      - name: ml_server_ip
+                        value: '{{inputs.parameters.ml_server_ip}}'
+              - name: updatemysql-success
+                container:
+                  image: localhost:5000/exithandler_v1:232509
+                  imagePullPolicy: IfNotPresent
+                  command:
+                  - python
+                  - exithandler.py
+                  - --mode
+                  - gen
+                  - --raw_data_filepath
+                  - '{{inputs.parameters.raw_data_filepath}}'
+                  - --project_id
+                  - '{{inputs.parameters.project_id}}'
+                  - --train_id
+                  - '{{inputs.parameters.train_id}}'
+                  - --gen_id
+                  - '{{inputs.parameters.gen_id}}'
+                  - --status
+                  - success
+                  - --ml_server_ip
+                  - '{{inputs.parameters.ml_server_ip}}'
+                  env:
+                  - name: mysqlcreds
+                    valueFrom:
+                      secretKeyRef:
+                        name: mysqlcreds
+                        key: creds
+                  - name: miniocreds
+                    valueFrom:
+                      secretKeyRef:
+                        name: miniocreds
+                        key: creds
+                  - name: backendcreds
+                    valueFrom:
+                      secretKeyRef:
+                        name: backendcreds
+                        key: creds
+                inputs:
+                  parameters:
+                  - name: train_id
+                  - name: project_id
+                  - name: gen_id
+                  - name: raw_data_filepath
+                  - name: ml_server_ip
+              - name: updatemysql-failure
+                container:
+                  image: localhost:5000/exithandler_v1:232509
+                  imagePullPolicy: IfNotPresent
+                  command:
+                  - python
+                  - exithandler.py
+                  - --mode
+                  - gen
+                  - --raw_data_filepath
+                  - '{{inputs.parameters.raw_data_filepath}}'
+                  - --project_id
+                  - '{{inputs.parameters.project_id}}'
+                  - --train_id
+                  - '{{inputs.parameters.train_id}}'
+                  - --gen_id
+                  - '{{inputs.parameters.gen_id}}'
+                  - --status
+                  - failed
+                  - --ml_server_ip
+                  - '{{inputs.parameters.ml_server_ip}}'
+                  env:
+                  - name: mysqlcreds
+                    valueFrom:
+                      secretKeyRef:
+                        name: mysqlcreds
+                        key: creds
+                  - name: miniocreds
+                    valueFrom:
+                      secretKeyRef:
+                        name: miniocreds
+                        key: creds
+                  - name: backendcreds
+                    valueFrom:
+                      secretKeyRef:
+                        name: backendcreds
+                        key: creds
+                inputs:
+                  parameters:
+                  - name: train_id
+                  - name: project_id
+                  - name: gen_id
+                  - name: raw_data_filepath
+                  - name: ml_server_ip
+              metadata:
+                labels:
+                  pipelines.kubeflow.org/kfp_sdk_version: 1.8.11
+                  pipelines.kubeflow.org/pipeline-sdk-type: kfp
+                  pipelines.kubeflow.org/enable_caching: 'true'
+              arguments:
+                parameters:
+                - name: raw_data_filepath
+                - name: project_id
+                - name: train_id
+                - name: gen_id
+                - name: get_sample_report
+                - name: gen_json_filepath
+                - name: workflow_name
+                - name: ml_server_ip
+        operation: create
+        parameters:
+        - src:
+            dependencyName: generate-model-dependency
+            dataKey: body.raw_data_filepath
+          dest: spec.arguments.parameters.0.value
+        - src:
+            dependencyName: generate-model-dependency
+            dataKey: body.project_id
+          dest: spec.arguments.parameters.1.value
+        - src:
+            dependencyName: generate-model-dependency
+            dataKey: body.train_id
+          dest: spec.arguments.parameters.2.value
+        - src:
+            dependencyName: generate-model-dependency
+            dataKey: body.gen_id
+          dest: spec.arguments.parameters.3.value
+        - src:
+            dependencyName: generate-model-dependency
+            dataKey: body.get_sample_report
+          dest: spec.arguments.parameters.4.value
+        - src:
+            dependencyName: generate-model-dependency
+            dataKey: body.gen_json_filepath
+          dest: spec.arguments.parameters.5.value
+        - src:
+            dependencyName: generate-model-dependency
+            dataKey: body.workflow_name
+          dest: metadata.name
+          operation: append
+        - src:
+            dependencyName: generate-model-dependency
+            dataKey: body.workflow_name
+          dest: spec.arguments.parameters.6.value
+        - src:
+            dependencyName: generate-model-dependency
+            dataKey: body.ml_server_ip
+          dest: spec.arguments.parameters.7.value
