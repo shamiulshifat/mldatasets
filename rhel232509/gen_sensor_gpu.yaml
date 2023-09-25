@@ -265,7 +265,7 @@ spec:
                   - /tmp/transformer.pt
                   - --data_json_filepath
                   - /tmp/data_args_2b.json
-                  image: localhost:5000/ml_engine_v2:232509
+                  image: localhost:5000/ml_engine_v2:2325092
                   imagePullPolicy: IfNotPresent
                   resources:
                     limits:
