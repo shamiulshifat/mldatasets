@@ -17,9 +17,8 @@ spec:
       - name: dockercreds
       containers:
       - name: tusserver
-        image: tusproject/tusd:v1.9
+        image: localhost:5000/tus_server:63
         imagePullPolicy: IfNotPresent
-        command: ["tusd -s3-bucket tus-uploads -s3-endpoint 172.26.0.2:9000 --hooks-dir=/hooks"]
         ports:
         - containerPort: 1080
         envFrom:
@@ -27,3 +26,4 @@ spec:
             name: backend-secret
         - secretRef:
             name: tus-secret
+
