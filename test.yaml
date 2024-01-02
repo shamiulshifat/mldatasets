@@ -19,7 +19,7 @@ spec:
       - name: tusserver
         image: localhost:5000/tus_server:46
         imagePullPolicy: IfNotPresent
-        command: ["/bin/bash", "-c", "tusd -s3-bucket tus-uploads -s3-endpoint ${S3_ENDPOINT} --hooks-dir=/hooks"]
+        command: ["tusd -s3-bucket tus-uploads -s3-endpoint ${S3_ENDPOINT} --hooks-dir=/hooks"]
         ports:
         - containerPort: 1080
         envFrom:
