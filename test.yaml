@@ -17,7 +17,7 @@ spec:
       - name: dockercreds
       containers:
       - name: tusserver
-        image: localhost:5000/tus_server:53
+        image: localhost:5000/tus_server:54
         imagePullPolicy: IfNotPresent
         command: ["tusd -s3-bucket tus-uploads -s3-endpoint ${S3_ENDPOINT} --hooks-dir=/hooks"]
         ports:
