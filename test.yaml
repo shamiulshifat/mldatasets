@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tus-server
+  namespace: backend
+spec:
+  selector:
+    matchLabels:
+      app: tus-server
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: tus-server
+    spec:
+      imagePullSecrets:
+      - name: dockercreds
+      containers:
+      - name: tusserver
+        image: localhost:5000/tus_server:46
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "-c", "tusd -s3-bucket tus-uploads -s3-endpoint ${S3_ENDPOINT} --hooks-dir=/hooks"]
+        ports:
+        - containerPort: 1080
+        envFrom:
+        - secretRef:
+            name: backend-secret
+        - secretRef:
+            name: tus-secret
