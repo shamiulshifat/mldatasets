@@ -1,30 +1,16 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: v1
+kind: Service
 metadata:
-  name: tus-server
-  namespace: backend
+  name: ml-fastapi-server-service
+  namespace: argo
 spec:
+  type: ClusterIP
+  # Uncomment the below line to create a Headless Service
+  # clusterIP: None
   selector:
-    matchLabels:
-      app: tus-server
-  replicas: 1
-  template:
-    metadata:
-      labels:
-        app: tus-server
-    spec:
-      imagePullSecrets:
-      - name: dockercreds
-      containers:
-      - name: tusserver
-        image: localhost:5000/tus_server:78
-        imagePullPolicy: IfNotPresent
-        command: ["tusd -s3-bucket tus-uploads -s3-endpoint ${S3_ENDPOINT} --hooks-dir /srv/tusd-hooks"]
-        ports:
-        - containerPort: 1080
-        envFrom:
-        - secretRef:
-            name: backend-secret
-        - secretRef:
-            name: tus-secret
+    app: ml-fastapi-server
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
 
